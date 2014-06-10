@@ -1,3 +1,11 @@
+2014-06-10:
+===========
+- New subsystem "uptime"
+- Some debug messages added 
+- Subsystem "vol" accepts units to display volume spaces given in "-u" units instead of kbytes
+- ONTAP version checking regex corrected 
+- diskio and tapeio perfdata UOM changed from bytes (B) to counter (c)
+
 2011-01-11:
 ===========
 - Move old scripts "check_netappfiler(|_netsnmp).py" to old/
