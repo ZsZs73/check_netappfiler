@@ -13,7 +13,7 @@ import sys
 RETURNSTRINGS	= { 0: "OK", 1: "WARNING", 2: "CRITICAL", 3: "UNKNOWN", 127: "UNKNOWN" }
 RETURNCODE	= { 'OK': 0, 'WARNING': 1, 'CRITICAL': 2, 'UNKNOWN': 3 }
 
-available_subsys = ['global', 'version', 'cpu', 'environment', 'nvram', 'disk', 'sparedisk', 'faileddisk', 'fs', 'vol', 'cifs-users', 'cifs-stats', 'cluster', 'snapmirror', 'snapvault', 'cacheage', 'cp', 'ifstat', 'diskio', 'tapeio', 'ops']
+available_subsys = ['global', 'version', 'cpu', 'environment', 'nvram', 'disk', 'sparedisk', 'faileddisk', 'fs', 'vol', 'cifs-users', 'cifs-stats', 'cluster', 'snapmirror', 'snapvault', 'cacheage', 'cp', 'ifstat', 'diskio', 'tapeio', 'ops', 'uptime']
 
 OIDs	= {
 		'Uptime':			'.1.3.6.1.2.1.1.3.0',
@@ -303,6 +303,9 @@ OkWarnCrit = {
 def SNMPGET_netsnmp(oid):
 	VBoid = netsnmp.Varbind(oid)
 
+	if options.verb >= 1:
+		print "SNMPGET_netsnmp %s" %  (oid)
+
 	result = netsnmp.snmpget(oid, Version = int(options.version), DestHost=options.host, Community=options.community)[0]
 
 	if result == None:
@@ -315,6 +318,9 @@ def SNMPGET_netsnmp(oid):
 
 def SNMPWALK_netsnmp(oid):
 	VBoid = netsnmp.Varbind(oid)
+	
+	if options.verb >= 1:
+		print "SNMPWALK_netsnmp %s" %  (oid)
 
 	result = netsnmp.snmpwalk(oid, Version = int(options.version), DestHost=options.host, Community=options.community)
 
@@ -554,6 +560,10 @@ parser.add_option("", "--nonetsnmp",
 		  action="store_true",
 		  dest="nonetsnmp",
 		  help="Do not use NET-SNMP python bindings")
+parser.add_option("-u", "",
+		  dest="unit",
+		  help="Display volume usage in (M|G|T)B rather than in kB")
+
 
 
 ###### Setting Defaults
@@ -570,6 +580,7 @@ parser.set_defaults(warn='0')
 parser.set_defaults(crit='0')
 parser.set_defaults(path='/usr/bin')
 parser.set_defaults(verb=0)
+parser.set_defaults(unit='k')
 
 (options, args) = parser.parse_args()
 
@@ -654,7 +665,7 @@ if options.cache:
 
 # Get the ONTAP Version
 if options.verb >= 1:
-	ONTAPver = re.search("NetApp\sRelease\s+([\d.a-zA-Z]+):", SNMPGET(OIDs['ONTAP_Version'])).group(1)
+	ONTAPver = re.search("NetApp\sRelease\s+([\d\s\-.a-zA-Z]+):", SNMPGET(OIDs['ONTAP_Version'])).group(1)
 	print 'ONTAP Version: %s' % ONTAPver
 
 	ONTAPver = ONTAPver.split('.')
@@ -683,15 +694,48 @@ if options.subsys == '' or options.subsys =='global':
 	ReturnMsg = Model + ': ' + GlobalStatusMsg
 
 	if options.verb >= 1:
-		print 'Uptime in seconds: %s' % SNMPGET('.1.3.6.1.2.1.1.3.0')
+		print 'Uptime in seconds: %s' % SNMPGET('Uptime')
 		print 'ONTAP version: %s' % '.'.join(ONTAPver)
 		print 'Global system status: %s, %s' % (GlobalStatusCode, GlobalStatusMsg)
 
 
 
+elif options.subsys == 'uptime':
+	Uptime_secs = int(SNMPGET(OIDs['Uptime'])) / 100
+
+	ReturnCode = RETURNCODE['OK']
+	ReturnMsg  = ''
+	Minute  = 60
+	Hour = Minute * 60
+	Day = Hour * 24
+	ReturnMsg = ''
+ 
+	Days    = int( Uptime_secs / Day )
+	Hours   = int( ( Uptime_secs % Day ) / Hour )
+	Minutes = int( ( Uptime_secs % Hour ) / Minute )
+	Seconds = int( Uptime_secs % Minute )
+
+	if Days > 0:
+		ReturnMsg += str(Days) + ' day' 
+		if Days <> 1: ReturnMsg += 's'
+		ReturnMsg += ", "
+	if len(ReturnMsg) > 0 or Hours > 0:
+		ReturnMsg += str(Hours) + ' hour'
+		if Hours <> 1: ReturnMsg += 's'
+		ReturnMsg += ", "
+	if len(ReturnMsg) > 0 or Minutes > 0:
+		ReturnMsg += str(Minutes) + " hour"
+		if Minutes <> 1: ReturnMsg += 's'
+		ReturnMsg += ", "
+	ReturnMsg += str(Seconds) + " second"
+	if Seconds <> 1: ReturnMsg += 's'
+	ReturnMsg += '|nauptime=%ss' % (Uptime_secs)
+
+	
+	
 elif options.subsys == 'version':
 	Model = SNMPGET(OIDs['Model'])
-	ONTAPver = re.search("NetApp\sRelease\s+([\d.a-zA-Z]+):", SNMPGET(OIDs['ONTAP_Version'])).group(1).split('.')
+	ONTAPver = re.search("NetApp\sRelease\s+([\d\s\-.a-zA-Z]+):", SNMPGET(OIDs['ONTAP_Version'])).group(1).split('.')
 	ReturnMsg =  Model + ': ONTAP version: %s' % '.'.join(ONTAPver)
 	ReturnCode = RETURNCODE['OK']
 
@@ -956,9 +1000,21 @@ elif options.subsys == 'vol':
 		if options.verb >= 1:
 			print "TestUsed - Value: %s, Warn: %s, Crit: %s - RetCode %s" % ((dfFSkBUsed*1024), TestLevelWarn, TestLevelCrit, ReturnCode)
 
+	if options.unit == 'M':
+		dfFSkBUsedDisp = dfFSkBUsed/1024
+		dfFSkBTotalDisp = dfFSkBTotal/1024
+	elif options.unit == 'G':
+		dfFSkBUsedDisp = dfFSkBUsed/1024/1024
+		dfFSkBTotalDisp = dfFSkBTotal/1024/1024
+	elif options.unit == 'T':
+		dfFSkBUsedDisp = dfFSkBUsed/1024/1024/1024
+		dfFSkBTotalDisp = dfFSkBTotal/1024/1024/1024
+	else:
+		dfFSkBUsedDisp = dfFSkBUsed
+		dfFSkBTotalDisp = dfFSkBTotal
 
-	ReturnMsg += ': %s%% used (%skB out of %skB), INodes: %s%% used, status: %s' % (
-			dfFSPctUsed, dfFSkBUsed, dfFSkBTotal,
+	ReturnMsg += ': %s%% used (%.0f%sB out of %.0f%sB), INodes: %s%% used, status: %s' % (
+			dfFSPctUsed, dfFSkBUsedDisp, options.unit, dfFSkBTotalDisp, options.unit,
 			dfFSPctINodeUsed,
 			Enum_df_FS_Status[dfFSStatus] )
 
@@ -1202,7 +1258,7 @@ elif options.subsys == 'diskio':
 
 	ReturnCode = RETURNCODE['OK']
 	ReturnMsg  = 'Disk I/O statistics'
-	ReturnMsg += '|nadiskread=%sB nadiskwrite=%sB' % (dio_read, dio_write)
+	ReturnMsg += '|nadiskread=%sc nadiskwrite=%sc' % (dio_read, dio_write)
 
 
 
@@ -1212,7 +1268,7 @@ elif options.subsys == 'tapeio':
 
 	ReturnCode = RETURNCODE['OK']
 	ReturnMsg  = 'Tape I/O statistics'
-	ReturnMsg += '|nataperead=%sB natapewrite=%sB' % (tio_read, tio_write)
+	ReturnMsg += '|nataperead=%sc natapewrite=%sc' % (tio_read, tio_write)
 
 
 
@@ -1243,3 +1299,4 @@ if options.cache:
 back2nagios(ReturnCode, ReturnMsg)
 
 # vim: ts=8 sw=8
+
